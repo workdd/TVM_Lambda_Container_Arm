@@ -13,7 +13,8 @@ from tvm.relay.testing import mobilenet
 # from tvm.relay.testing import inception_v3
 print('import time: ', time.time() - import_start_time)
 
-target = 'llvm'
+# target for arm hardware
+target = tvm.target.arm_cpu()
 ctx = tvm.cpu()
 
 def make_dataset(batch_size,size):
