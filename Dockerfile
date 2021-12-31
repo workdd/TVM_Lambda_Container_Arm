@@ -37,8 +37,5 @@ RUN make -j3
 WORKDIR ../../
 
 RUN cp /var/task/TVM_Lambda_Container_Arm/lambda_function.py ${LAMBDA_TASK_ROOT}
-# RUN chmod 644 $(find . -type f)
-# RUN chmod 755 $(find . -type d)
 
-# ENTRYPOINT ["/lambda-entrypoint.sh"]
 CMD ["lambda_function.lambda_handler"]
