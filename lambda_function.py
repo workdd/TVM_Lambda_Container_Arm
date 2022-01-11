@@ -1,21 +1,22 @@
 import time
-import os
-import numpy as np
+import itertools
+import tensorflow as tf
 import_start_time = time.time()
 from tvm import relay
-from tvm.relay import testing
-import tvm
-import pickle
-from tvm.contrib import utils
-from tvm.contrib import graph_runtime
-# from tvm.relay.testing import resnet
-from tvm.relay.testing import mobilenet
-# from tvm.relay.testing import inception_v3
+import numpy as np 
+import tvm 
+from tvm.contrib import graph_executor
+import tvm.relay.testing.tf as tf_testing
+
+import tvm.testing 
+from tvm.runtime.vm import VirtualMachine
 print('import time: ', time.time() - import_start_time)
 
-# target for arm hardware
-target = tvm.target.arm_cpu()
-ctx = tvm.cpu()
+model_name = 'resnet50'
+batch_size = '1'
+size = '224'
+arch_type = 'arm'
+
 
 def make_dataset(batch_size,size):
     image_shape = (3, size, size)
@@ -25,93 +26,75 @@ def make_dataset(batch_size,size):
 
     return data,image_shape
 
-def test_resnet(data,batch_size,image_shape):
-    num_class=1000
-    out_shape = (batch_size, num_class)
+def wrap_frozen_graph(graph_def, inputs, outputs, print_graph=False):
+    def _imports_graph_def():
+        tf.compat.v1.import_graph_def(graph_def, name="")
 
-    mod, params = relay.testing.resnet.get_workload(
-        num_layers=50, batch_size=batch_size, image_shape=image_shape
-    )
-
-    end_to_end = time.time()
-    # build 
-    opt_level = 3
-    with relay.build_config(opt_level=opt_level):
-        graph, lib, params = relay.build_module.build(
-            mod, target, params=params)
-    print("build_time",(time.time()-end_to_end)*1000,"ms")
-
-    # graph create 
-    module = graph_runtime.create(graph, lib, ctx)
-
-    module.run(data = data)
-    out = module.get_output(0).asnumpy()
-
-    lib.export_library(f"./resnet50_{batch_size}_{target}_deploy_lib.tar")
-
-
-    data_tvm = tvm.nd.array(data.astype('float32'))
-    e = module.module.time_evaluator("run", ctx, number=5, repeat=1)
-    t = e(data_tvm).results
-    t = np.array(t) * 1000
-
-    print('{} (batch={}): {} ms'.format('resnet50', batch_size, t.mean()))
-
-def test_mobilenet(data,batch_size,image_shape):
-    mod, params = mobilenet.get_workload( batch_size=batch_size)
+    wrapped_import = tf.compat.v1.wrap_function(_imports_graph_def, [])
+    import_graph = wrapped_import.graph
     
-    end_to_end = time.time()
-    opt_level = 3
-    with relay.build_config(opt_level=opt_level):
-        graph, lib, params = relay.build_module.build(
-            mod, target, params=params)
-    print("build_time",(time.time()-end_to_end)*1000,"ms")
+    return wrapped_import.prune(
+        tf.nest.map_structure(import_graph.as_graph_element, inputs),
+        tf.nest.map_structure(import_graph.as_graph_element, outputs))
 
-    module = graph_runtime.create(graph, lib, ctx)
-    module.set_input("data", data)
-    module.set_input(**params)
-    module.run()
-    out = module.get_output(0).asnumpy()
-    lib.export_library(f"/tmp/mobilenet_{batch_size}_{target}_deploy_lib.tar")
+load_model = time.time()
+with tf.io.gfile.GFile(f"./frozen_models/frozen_{model_name}.pb", "rb") as f:
+        graph_def = tf.compat.v1.GraphDef()
+        graph_def.ParseFromString(f.read())
+        graph = tf.import_graph_def(graph_def, name="")
+        # Call the utility to import the graph definition into default graph.
+        graph_def = tf_testing.ProcessGraphDefParam(graph_def)
+        try : 
+            with tf.compat.v1.Session() as sess:
+                graph_def = tf_testing.AddShapesToGraphDef(sess, "softmax")
+        except:
+            pass
 
-    data_tvm = tvm.nd.array(data.astype('float32'))
-    e = module.module.time_evaluator("run", ctx, number=5, repeat=1)
-    t = e(data_tvm).results
-    t = np.array(t) * 1000
-    print('{} (batch={}): {} ms'.format('mobilenet', batch_size, t.mean()))
+frozen_func = wrap_frozen_graph(graph_def=graph_def,
+                                    inputs=["input_1:0"],
+                                    outputs=["Identity:0"],
+                                    print_graph=True)
 
+# test dataset 생성 
+data, image_shape = make_dataset(batch_size,size)
 
-def test_inception(data,batch_size,image_shape):
-    mod, params = inception_v3.get_workload( batch_size=batch_size)
-    
-    end_to_end = time.time()
-    opt_level = 3
-    with relay.build_config(opt_level=opt_level):
-        graph, lib, params = relay.build_module.build(
-            mod, target, params=params)
-    print("build_time",(time.time()-end_to_end)*1000,"ms")
+print(data.shape)
+shape_dict = {"DecodeJpeg/contents": data.shape}
 
-    module = graph_runtime.create(graph, lib, ctx)
-    module.set_input("data", data)
-    module.set_input(**params)
-    module.run()
-    out = module.get_output(0).asnumpy()
-    lib.export_library(f"./inception_v3_{batch_size}_{target}_deploy_lib.tar")
+##### Convert tensorflow model 
+mod, params = relay.frontend.from_tensorflow(graph_def, layout=None, shape=shape_dict)
+print("Tensorflow protobuf imported to relay frontend.")
+print("-"*10,"Load frozen model",time.time()-load_model,"s","-"*10)
 
-    data_tvm = tvm.nd.array(data.astype('float32'))
-    e = module.module.time_evaluator("run", ctx, number=5, repeat=1)
-    t = e(data_tvm).results
-    t = np.array(t) * 1000
-    print('{} (batch={}): {} ms'.format('inceptionV3', batch_size, t.mean()))
+if arch_type == "intel":
+    target = "llvm"
+else:
+    target = tvm.target.arm_cpu()
+
+ctx = tvm.cpu()
+
+print("-"*10,"Compile style : create_executor vm ","-"*10)
+build_time = time.time()
+with tvm.transform.PassContext(opt_level=3):
+    # executor = relay.build_module.create_executor("vm", mod, tvm.cpu(0), target)
+    mod = relay.transform.InferType()(mod)
+    executor = relay.vm.compile(mod, target=target, params=params)
+
+print("-"*10,"Build latency : ",time.time()-build_time,"s","-"*10)
+
+# executor.evaluate()(data,**params)
+vm = VirtualMachine(executor,ctx)
+_out = vm.invoke("main",data)
+
+input_data = tvm.nd.array(data)
+
 
 def lambda_handler(event, context):
     batch_size = event['batch_size']
     size=224
     data, image_shape = make_dataset(batch_size,size)
-#     test_resnet(data,batch_size,image_shape)
-    print('start mobilenet')
-    test_mobilenet(data,batch_size,image_shape)
-
-#     inception_size=299
-#     inception_data,inception_image_shape=make_dataset(batch_size,inception_size)
-#     test_inception(inception_data,batch_size,inception_image_shape)
+    start_time = time.time()
+    vm.run(input_data)
+    print(f"VM {model_name}-{batch_size} inference latency : ",(time.time()-start_time)*1000,"ms")
+    
+    return model_name
