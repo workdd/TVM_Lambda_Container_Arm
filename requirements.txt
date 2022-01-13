@@ -8,4 +8,5 @@ cloudpickle
 boto3
 pytest
 python-dotenv
-tensorflow-aarch64
+cython
+protobuf
