@@ -11,8 +11,6 @@ import onnx
 import boto3
 print('import time: ', time.time() - import_start_time)
 
-
-
 def get_model(model_name, bucket_name):
     s3_client = boto3.client('s3')    
     s3_client.download_file(bucket_name, 'tvm/'+ model_name, '/tmp/'+ model_name)
