@@ -5,8 +5,6 @@ import numpy as np
 import tvm 
 from tvm.contrib import graph_executor
 from tvm.contrib import graph_runtime
-import tvm.relay.testing.tf as tf_testing
-import tvm.testing 
 import onnx
 import boto3
 print('import time: ', time.time() - import_start_time)
@@ -32,7 +30,7 @@ ctx = tvm.cpu()
 def lambda_handler(event, context):
     bucket_name = event['bucket_name']
     batch_size = event['batch_size']
-    model_name = event['model_name']
+    model_name = event['model_name'] +'_'+str(batch_size)+'_arm'
     count = event['count']
     size = 224
     arch_type = 'arm'
