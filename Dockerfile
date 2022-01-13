@@ -15,7 +15,7 @@ ENV PYTHONPATH=$TVM_HOME/python:${PYTHONPATH}
 ENV PATH=$TVM_HOME/python:$PATH
 
 RUN pip3 install -r /var/task/TVM_Lambda_Container_Arm/requirements.txt
-RUN yum install libprotobuf-dev protobuf-compiler
+RUN yum install libprotobuf-devel protobuf-compiler
 RUN pip3 install onnx
 
 # install packages
