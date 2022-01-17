@@ -11,7 +11,7 @@ print('import time: ', time.time() - import_start_time)
 
 def get_model(model_name, bucket_name, get_path):
     s3_client = boto3.client('s3')
-    if get_path == '/tvm':
+    if get_path == 'tvm/':
         s3_client.download_file(bucket_name, get_path + model_name +'/model.tar', '/tmp/'+ model_name)
         s3_client.download_file(bucket_name, get_path + model_name +'/model.params', '/tmp/'+ model_name)
         s3_client.download_file(bucket_name, get_path + model_name +'/model.json', '/tmp/'+ model_name)
