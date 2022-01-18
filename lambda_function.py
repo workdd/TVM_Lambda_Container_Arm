@@ -30,18 +30,23 @@ def make_dataset(batch_size,size):
 
 load_model = time.time()
 
-target = 'llvm -device=arm_cpu -mtriple=aarch64-linux-gnu -mattr=+neon,+v8.2a'
-ctx = tvm.cpu()
 
 def lambda_handler(event, context):
     bucket_name = event['bucket_name']
     batch_size = event['batch_size']
     onnx_name = event['model_name'] + '.onnx'
-    model_name = event['model_name'] +'_'+str(batch_size)+'_llvm'
+    arch_type = event['arch_type']
+    model_name = event['model_name'] +'_'+str(batch_size)+'_' + arch_type
     is_build = event['is_build']
     count = event['count']
     size = 224
-
+    
+    if arch_type == 'arm':
+        target = tvm.target.arm_cpu()
+    else:
+        target = arch_type
+    ctx = tvm.cpu()
+    
     data, image_shape = make_dataset(batch_size,size)
     
     if is_build == 'true':
@@ -57,12 +62,12 @@ def lambda_handler(event, context):
         print('build time:', time.time() - build_time)
     else:
         graph_fn, mod_fn, params_fn = get_model(model_name, bucket_name, 'tvm/')
-        loaded_graph = open(graph_fn).read()
-        loaded_mod = tvm.runtime.load_module(mod_fn)
-        loaded_params = open(params_fn, "rb").read()
+        graph = open(graph_fn).read()
+        lib = tvm.runtime.load_module(mod_fn)
+        params = open(params_fn, "rb").read()
     module = graph_runtime.create(graph, lib, ctx)
     module.set_input("input_1", data)
-    module.set_input(**params)
+    module.load_params(params)
 
     time_list = []
     for i in range(count):
